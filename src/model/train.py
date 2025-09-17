@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn 
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, DataLoader
 
 # Import the model class from the main file
 from src.Classifier import Classifier
@@ -49,7 +49,7 @@ def train(model, train_loader, valid_loader, config):
     for epoch in range(config.epochs):
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
-            data = data.view(data.shape[0],-1)
+            # No need to reshape for Iris dataset (already has correct shape)
             optimizer.zero_grad()
             output = model(data)
             loss = F.cross_entropy(output, target)
@@ -77,7 +77,7 @@ def test(model, test_loader):
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-            data = data.view(data.shape[0],-1)
+            # No need to reshape for Iris dataset
             output = model(data)
             test_loss += F.cross_entropy(output, target, reduction='sum')  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
@@ -110,75 +110,79 @@ def evaluate(model, test_loader):
     """
 
     loss, accuracy = test(model, test_loader)
-    highest_losses, hardest_examples, true_labels, predictions = get_hardest_k_examples(model, test_loader.dataset)
+    highest_losses, hardest_examples, true_labels, predictions = get_hardest_k_examples(model, test_loader)
 
     return loss, accuracy, highest_losses, hardest_examples, true_labels, predictions
 
-def get_hardest_k_examples(model, testing_set, k=32):
+def get_hardest_k_examples(model, test_loader, k=32):
     model.eval()
 
-    loader = DataLoader(testing_set, 1, shuffle=False)
-
     # get the losses and predictions for each item in the dataset
-    losses = None
-    predictions = None
+    losses = []
+    all_data = []
+    all_targets = []
+    all_predictions = []
+    
     with torch.no_grad():
-        for data, target in loader:
+        for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-            data = data.view(data.shape[0],-1)
             output = model(data)
-            loss = F.cross_entropy(output, target)
+            loss = F.cross_entropy(output, target, reduction='none')
             pred = output.argmax(dim=1, keepdim=True)
             
-            if losses is None:
-                losses = loss.view((1, 1))
-                predictions = pred
-            else:
-                losses = torch.cat((losses, loss.view((1, 1))), 0)
-                predictions = torch.cat((predictions, pred), 0)
+            losses.extend(loss.cpu().numpy())
+            all_data.extend(data.cpu().numpy())
+            all_targets.extend(target.cpu().numpy())
+            all_predictions.extend(pred.cpu().numpy())
 
-    argsort_loss = torch.argsort(losses, dim=0).cpu()
+    # Convert to tensors
+    losses = torch.tensor(losses)
+    all_data = torch.tensor(all_data)
+    all_targets = torch.tensor(all_targets)
+    all_predictions = torch.tensor(all_predictions)
 
-    highest_k_losses = losses[argsort_loss[-k:]]
-    hardest_k_examples = testing_set[argsort_loss[-k:]][0]
-    true_labels = testing_set[argsort_loss[-k:]][1]
-    predicted_labels = predictions[argsort_loss[-k:]]
+    # Get indices of examples with highest loss
+    _, indices = torch.topk(losses, k)
+    
+    highest_k_losses = losses[indices]
+    hardest_k_examples = all_data[indices]
+    true_labels = all_targets[indices]
+    predicted_labels = all_predictions[indices]
 
     return highest_k_losses, hardest_k_examples, true_labels, predicted_labels
 
-from torch.utils.data import DataLoader
 
-def train_and_log(config,experiment_id='99'):
+def train_and_log(config, experiment_id='99'):
     with wandb.init(
         project="Project", 
         name=f"Train Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", 
         job_type="train-model", config=config) as run:
         config = wandb.config
-        data = run.use_artifact('iris-preprocess:latest')
+        data = run.use_artifact('iris-raw:latest')  # Changed to iris-raw
         data_dir = data.download()
 
-        training_dataset =  read(data_dir, "training")
+        training_dataset = read(data_dir, "training")
         validation_dataset = read(data_dir, "validation")
 
         train_loader = DataLoader(training_dataset, batch_size=config.batch_size)
         validation_loader = DataLoader(validation_dataset, batch_size=config.batch_size)
         
-        model_artifact = run.use_artifact("linear:latest")
-        model_dir = model_artifact.download()
-        model_path = os.path.join(model_dir, "initialized_model_linear.pth")
-        model_config = model_artifact.metadata
-        config.update(model_config)
-
+        # Create a new model with the correct input size for Iris (4 features)
+        model_config = {
+            "input_dim": 4,  # Iris has 4 features
+            "hidden_dim": 128,  # You can adjust this
+            "output_dim": 3  # Iris has 3 classes
+        }
+        
         model = Classifier(**model_config)
-        model.load_state_dict(torch.load(model_path))
         model = model.to(device)
  
         train(model, train_loader, validation_loader, config)
 
         model_artifact = wandb.Artifact(
             "trained-model", type="model",
-            description="Trained NN model",
-            metadata=dict(model_config))
+            description="Trained NN model for Iris dataset",
+            metadata=model_config)
 
         torch.save(model.state_dict(), "trained_model.pth")
         model_artifact.add_file("trained_model.pth")
@@ -189,14 +193,13 @@ def train_and_log(config,experiment_id='99'):
     return model
 
     
-def evaluate_and_log(experiment_id='99',config=None,):
-    
+def evaluate_and_log(experiment_id='99', config=None):
     with wandb.init(project="Project", name=f"Eval Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", job_type="eval-model", config=config) as run:
-        data = run.use_artifact('iris-preprocess:latest')
+        data = run.use_artifact('iris-raw:latest')  # Changed to iris-raw
         data_dir = data.download()
         testing_set = read(data_dir, "test")
 
-        test_loader = torch.utils.data.DataLoader(testing_set, batch_size=128, shuffle=False)
+        test_loader = DataLoader(testing_set, batch_size=128, shuffle=False)
 
         model_artifact = run.use_artifact("trained-model:latest")
         model_dir = model_artifact.download()
@@ -211,26 +214,17 @@ def evaluate_and_log(experiment_id='99',config=None,):
 
         run.summary.update({"loss": loss, "accuracy": accuracy})
 
+        # Log some examples with high loss
         wandb.log({"high-loss-examples":
-            [wandb.Image(hard_example, caption=str(int(pred)) + "," +  str(int(label)))
+            [wandb.Image(hard_example, caption=f"Pred: {int(pred)}, True: {int(label)}")
              for hard_example, pred, label in zip(hardest_examples, preds, true_labels)]})
 
-epochs = [25,50,100]
-for id,epoch in enumerate(epochs):
+# Training and evaluation loop
+epochs = [25, 50, 100]
+for id, epoch in enumerate(epochs):
     train_config = {"batch_size": 128,
                 "epochs": epoch,
                 "batch_log_interval": 25,
                 "optimizer": "Adam"}
-    model = train_and_log(train_config,id)
-    evaluate_and_log(id)        
-
-"""    
-train_config = {"batch_size": 128,
-                "epochs": 5,
-                "batch_log_interval": 25,
-                "optimizer": "Adam"}
-
-model = train_and_log(train_config)
-evaluate_and_log()
-"""
-#testing
+    model = train_and_log(train_config, id)
+    evaluate_and_log(id)
