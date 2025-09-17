@@ -4,7 +4,6 @@ from torch.utils.data import TensorDataset
 # Testing
 import argparse
 import wandb
-#Testing
 
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
