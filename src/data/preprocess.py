@@ -36,12 +36,12 @@ def preprocess_and_log(steps):
 
     with wandb.init(project="Project",name=f"Preprocess Data ExecId-{args.IdExecution}", job_type="preprocess-data") as run:    
         processed_data = wandb.Artifact(
-            "mnist-preprocess", type="dataset",
-            description="Preprocessed IRIS dataset",
+            "iris-preprocess", type="dataset",
+            description="Preprocessed iris dataset",
             metadata=steps)
          
         # ✔️ declare which artifact we'll be using
-        raw_data_artifact = run.use_artifact('mnist-raw:latest')
+        raw_data_artifact = run.use_artifact('iris-raw:latest')
 
         # 📥 if need be, download the artifact
         raw_dataset = raw_data_artifact.download(root="./data/artifacts/")
