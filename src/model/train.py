@@ -110,6 +110,9 @@ def get_hardest_k_examples(model, test_loader, k=32):
     all_targets = torch.tensor(all_targets)
     all_predictions = torch.tensor(all_predictions)
 
+    # Ajustar k para que no sea mayor que el número de ejemplos disponibles
+    k = min(k, len(losses))
+    
     _, indices = torch.topk(losses, k)
     
     highest_k_losses = losses[indices]
