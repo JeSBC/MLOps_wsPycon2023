@@ -23,24 +23,10 @@ else:
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Device: ", device)
 
-
 def read(data_dir, split):
-    """
-    Read data from a directory and return a TensorDataset object.
-
-    Args:
-    - data_dir (str): The directory where the data is stored.
-    - split (str): The name of the split to read (e.g. "train", "valid", "test").
-
-    Returns:
-    - dataset (TensorDataset): A TensorDataset object containing the data.
-    """
     filename = split + ".pt"
     x, y = torch.load(os.path.join(data_dir, filename))
-
     return TensorDataset(x, y)
-
-
 
 def train(model, train_loader, valid_loader, config):
     optimizer = getattr(torch.optim, config.optimizer)(model.parameters())
@@ -49,7 +35,6 @@ def train(model, train_loader, valid_loader, config):
     for epoch in range(config.epochs):
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
-            # No need to reshape for Iris dataset (already has correct shape)
             optimizer.zero_grad()
             output = model(data)
             loss = F.cross_entropy(output, target)
@@ -65,10 +50,8 @@ def train(model, train_loader, valid_loader, config):
                 
                 train_log(loss, example_ct, epoch)
 
-        # evaluate the model on the validation set at each epoch
         loss, accuracy = test(model, valid_loader)  
         test_log(loss, accuracy, example_ct, epoch)
-
     
 def test(model, test_loader):
     model.eval()
@@ -77,47 +60,34 @@ def test(model, test_loader):
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-            # No need to reshape for Iris dataset
             output = model(data)
-            test_loss += F.cross_entropy(output, target, reduction='sum')  # sum up batch loss
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            test_loss += F.cross_entropy(output, target, reduction='sum')
+            pred = output.argmax(dim=1, keepdim=True)
             correct += pred.eq(target.view_as(pred)).sum()
 
     test_loss /= len(test_loader.dataset)
-
     accuracy = 100. * correct / len(test_loader.dataset)
     
     return test_loss, accuracy
 
-
 def train_log(loss, example_ct, epoch):
     loss = float(loss)
-    # where the magic happens
     wandb.log({"epoch": epoch, "train/loss": loss}, step=example_ct)
     print(f"Loss after " + str(example_ct).zfill(5) + f" examples: {loss:.3f}")
     
-
 def test_log(loss, accuracy, example_ct, epoch):
     loss = float(loss)
     accuracy = float(accuracy)
-    # where the magic happens
     wandb.log({"epoch": epoch, "validation/loss": loss, "validation/accuracy": accuracy}, step=example_ct)
     print(f"Loss/accuracy after " + str(example_ct).zfill(5) + f" examples: {loss:.3f}/{accuracy:.3f}")
 
 def evaluate(model, test_loader):
-    """
-    ## Evaluate the trained model
-    """
-
     loss, accuracy = test(model, test_loader)
     highest_losses, hardest_examples, true_labels, predictions = get_hardest_k_examples(model, test_loader)
-
     return loss, accuracy, highest_losses, hardest_examples, true_labels, predictions
 
 def get_hardest_k_examples(model, test_loader, k=32):
     model.eval()
-
-    # get the losses and predictions for each item in the dataset
     losses = []
     all_data = []
     all_targets = []
@@ -135,13 +105,11 @@ def get_hardest_k_examples(model, test_loader, k=32):
             all_targets.extend(target.cpu().numpy())
             all_predictions.extend(pred.cpu().numpy())
 
-    # Convert to tensors
     losses = torch.tensor(losses)
     all_data = torch.tensor(all_data)
     all_targets = torch.tensor(all_targets)
     all_predictions = torch.tensor(all_predictions)
 
-    # Get indices of examples with highest loss
     _, indices = torch.topk(losses, k)
     
     highest_k_losses = losses[indices]
@@ -151,14 +119,14 @@ def get_hardest_k_examples(model, test_loader, k=32):
 
     return highest_k_losses, hardest_k_examples, true_labels, predicted_labels
 
-
 def train_and_log(config, experiment_id='99'):
     with wandb.init(
         project="Project", 
         name=f"Train Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", 
         job_type="train-model", config=config) as run:
+        
         config = wandb.config
-        data = run.use_artifact('iris-raw:latest')  # Changed to iris-raw
+        data = run.use_artifact('iris-raw:latest')
         data_dir = data.download()
 
         training_dataset = read(data_dir, "training")
@@ -167,11 +135,12 @@ def train_and_log(config, experiment_id='99'):
         train_loader = DataLoader(training_dataset, batch_size=config.batch_size)
         validation_loader = DataLoader(validation_dataset, batch_size=config.batch_size)
         
-        # Create a new model with the correct input size for Iris (4 features)
+        # Configuración del modelo para Iris
         model_config = {
-            "input_dim": 4,  # Iris has 4 features
-            "hidden_dim": 128,  # You can adjust this
-            "output_dim": 3  # Iris has 3 classes
+            "input_shape": 4,  # 4 características en el dataset Iris
+            "hidden_layer_1": 128,
+            "hidden_layer_2": 64,
+            "num_classes": 3  # 3 clases en el dataset Iris
         }
         
         model = Classifier(**model_config)
@@ -191,11 +160,10 @@ def train_and_log(config, experiment_id='99'):
         run.log_artifact(model_artifact)
 
     return model
-
     
 def evaluate_and_log(experiment_id='99', config=None):
     with wandb.init(project="Project", name=f"Eval Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", job_type="eval-model", config=config) as run:
-        data = run.use_artifact('iris-raw:latest')  # Changed to iris-raw
+        data = run.use_artifact('iris-raw:latest')
         data_dir = data.download()
         testing_set = read(data_dir, "test")
 
@@ -214,17 +182,25 @@ def evaluate_and_log(experiment_id='99', config=None):
 
         run.summary.update({"loss": loss, "accuracy": accuracy})
 
-        # Log some examples with high loss
-        wandb.log({"high-loss-examples":
-            [wandb.Image(hard_example, caption=f"Pred: {int(pred)}, True: {int(label)}")
-             for hard_example, pred, label in zip(hardest_examples, preds, true_labels)]})
+        # Crear una tabla para los ejemplos más difíciles
+        table = wandb.Table(columns=["features", "true_label", "predicted_label", "loss"])
+        for i in range(len(hardest_examples)):
+            table.add_data(
+                hardest_examples[i].numpy(), 
+                int(true_labels[i].numpy()),
+                int(preds[i].numpy()),
+                highest_losses[i].numpy()
+            )
+        wandb.log({"hardest_examples": table})
 
 # Training and evaluation loop
 epochs = [25, 50, 100]
 for id, epoch in enumerate(epochs):
-    train_config = {"batch_size": 128,
-                "epochs": epoch,
-                "batch_log_interval": 25,
-                "optimizer": "Adam"}
+    train_config = {
+        "batch_size": 128,
+        "epochs": epoch,
+        "batch_log_interval": 25,
+        "optimizer": "Adam"
+    }
     model = train_and_log(train_config, id)
     evaluate_and_log(id)
