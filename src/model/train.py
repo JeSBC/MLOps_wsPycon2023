@@ -150,11 +150,11 @@ from torch.utils.data import DataLoader
 
 def train_and_log(config,experiment_id='99'):
     with wandb.init(
-        project="MLOps-Pycon2023", 
+        project="Project", 
         name=f"Train Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", 
         job_type="train-model", config=config) as run:
         config = wandb.config
-        data = run.use_artifact('mnist-preprocess:latest')
+        data = run.use_artifact('iris-preprocess:latest')
         data_dir = data.download()
 
         training_dataset =  read(data_dir, "training")
@@ -191,8 +191,8 @@ def train_and_log(config,experiment_id='99'):
     
 def evaluate_and_log(experiment_id='99',config=None,):
     
-    with wandb.init(project="MLOps-Pycon2023", name=f"Eval Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", job_type="eval-model", config=config) as run:
-        data = run.use_artifact('mnist-preprocess:latest')
+    with wandb.init(project="Project", name=f"Eval Model ExecId-{args.IdExecution} ExperimentId-{experiment_id}", job_type="eval-model", config=config) as run:
+        data = run.use_artifact('iris-preprocess:latest')
         data_dir = data.download()
         testing_set = read(data_dir, "test")
 
@@ -215,7 +215,7 @@ def evaluate_and_log(experiment_id='99',config=None,):
             [wandb.Image(hard_example, caption=str(int(pred)) + "," +  str(int(label)))
              for hard_example, pred, label in zip(hardest_examples, preds, true_labels)]})
 
-epochs = [50,100,200]
+epochs = [25,50,100]
 for id,epoch in enumerate(epochs):
     train_config = {"batch_size": 128,
                 "epochs": epoch,
